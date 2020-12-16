@@ -20,5 +20,4 @@ COPY . .
 RUN cd plugin && \
     make
 
-# CMD qemu-x86_64 -plugin ./plugin/libtracer.so,arg="/tmp/write",arg="/tmp/read" /bin/ls
-CMD python tracer.py /bin/ls
+CMD python -u tracer.py /bin/ls
