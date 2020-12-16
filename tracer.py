@@ -85,6 +85,7 @@ def main():
 
     trace_pipe_read = open(trace_pipe_read_path, "rb")
     trace_pipe_write = open(trace_pipe_write_path, "wb")
+    basic_block_trace = []
 
     r_list = [process.stdout, process.stderr, trace_pipe_read]
     w_list = []
@@ -106,6 +107,15 @@ def main():
                     ).from_buffer_copy(trace_data)
 
                     reason = TRACE_REASON(trace_header.reason)
+                    basic_block_trace.extend(trace_addrs)
+
+                    def syscall_int_fmt(arg):
+                        if arg <= 0x100:
+                            return str(arg)
+                        elif (1 << 32) - 0x100 <= arg < (1 << 32):
+                            return str(arg | (-(arg & 0x80000000)))
+                        else:
+                            return hex(arg)
 
                     if reason == TRACE_REASON.trace_full:
                         pass
@@ -117,18 +127,15 @@ def main():
                         syscall_definition_name = syscall_definition[1]
                         syscall_definition_args = syscall_definition[2:]
 
+                        if syscall_definition_name.startswith("sys_"):
+                            syscall_definition_name = syscall_definition_name[
+                                len("sys_") :
+                            ]
+
                         args = trace_header.info.syscall_data.syscall_start_data
 
-                        def syscall_arg_fmt(arg):
-                            if arg <= 0x100:
-                                return str(arg)
-                            elif (1 << 32) - 0x100 <= arg < (1 << 32):
-                                return str(arg | (-(arg & 0x80000000)))
-                            else:
-                                return hex(arg)
-
                         description_inner = ", ".join(
-                            syscall_arg_fmt(args[i])
+                            syscall_int_fmt(args[i])
                             for i in range(len(syscall_definition_args))
                         )
                         description = f"{syscall_definition_name}({description_inner})"
@@ -136,7 +143,10 @@ def main():
                         print(description, end=" ")
 
                     elif reason == TRACE_REASON.trace_syscall_end:
-                        print("=", hex(trace_header.info.syscall_data.syscall_ret))
+                        print(
+                            "=",
+                            syscall_int_fmt(trace_header.info.syscall_data.syscall_ret),
+                        )
 
                     os.write(trace_pipe_write.fileno(), b"\x00" * 8)
 
@@ -158,6 +168,10 @@ def main():
 
             if not data:
                 r_list.remove(r)
+
+    total_bb_addrs = len(basic_block_trace)
+    unique_bb_addrs = len(set(basic_block_trace))
+    print(f"\n\nTraced {total_bb_addrs} basic blocks ({unique_bb_addrs} unique)")
 
 
 if __name__ == "__main__":
