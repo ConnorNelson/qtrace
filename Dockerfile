@@ -13,11 +13,11 @@ RUN mkdir build && \
     make -j16 && \
     make install
 
-RUN mkdir /opt/tracer
-WORKDIR /opt/tracer
+RUN mkdir /opt/qtrace
+WORKDIR /opt/qtrace
 COPY . .
 
 RUN cd plugin && \
     make
 
-CMD python -u tracer.py /bin/ls
+CMD python -u qtrace.py /bin/ls
