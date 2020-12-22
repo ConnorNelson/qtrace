@@ -9,7 +9,7 @@ import enum
 import ctypes
 import subprocess
 
-import syscalls
+from . import syscalls
 
 QEMU_PATH = "/usr/local/bin/qemu-x86_64"
 TRACE_MAX_BB_ADDRS = 0x1000
@@ -79,7 +79,7 @@ class TraceMachine:
             [
                 QEMU_PATH,
                 "-plugin",
-                f"./plugin/libtracer.so,arg={trace_pipe_write_path},arg={trace_pipe_read_path}",
+                f"/opt/qtrace/qemu_plugin/libqtrace.so,arg={trace_pipe_write_path},arg={trace_pipe_read_path}",
                 *self.argv,
             ],
             stdout=subprocess.PIPE,
@@ -93,6 +93,7 @@ class TraceMachine:
         w_list = []
         x_list = []
         num_bytes = array.array("i", [0])
+
         while r_list:
             r_available, w_available, x_available = select.select(
                 r_list, w_list, x_list
@@ -122,7 +123,7 @@ class TraceMachine:
 
                         elif reason == TRACE_REASON.trace_syscall_start:
                             syscall_nr = trace_header.info.syscall_num
-                            syscall_definition = syscalls.x86_64[syscall_nr]
+                            syscall_definition = syscalls["x86_64"][syscall_nr]
                             syscall_args = syscall_definition[2:]
                             args = list(
                                 trace_header.info.syscall_data.syscall_start_data
@@ -181,7 +182,7 @@ class LogTraceMachine(TraceMachine):
     def on_syscall_start(self, syscall_nr, *args):
         super().on_syscall_start(syscall_nr, *args)
 
-        syscall_definition = syscalls.x86_64[syscall_nr]
+        syscall_definition = syscalls["x86_64"][syscall_nr]
         syscall_name = syscall_definition[1]
 
         if syscall_name.startswith("sys_"):
@@ -195,16 +196,3 @@ class LogTraceMachine(TraceMachine):
         super().on_syscall_end(syscall_nr, ret)
 
         print("=", self.syscall_int_fmt(ret))
-
-
-def main():
-    machine = LogTraceMachine(sys.argv[1:])
-    machine.run()
-
-    total_bb_addrs = sum(1 for event in machine.trace if event[0] == "bb")
-    unique_bb_addrs = len(set(event[1] for event in machine.trace if event[0] == "bb"))
-    print(f"\n\nTraced {total_bb_addrs} basic blocks ({unique_bb_addrs} unique)")
-
-
-if __name__ == "__main__":
-    main()

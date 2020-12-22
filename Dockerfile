@@ -2,7 +2,7 @@ FROM ubuntu:20.04
 
 ENV DEBIAN_FRONTEND noninteractive
 RUN apt-get update && \
-    apt-get install -y git build-essential python-is-python3 pkg-config libglib2.0-dev
+    apt-get install -y git build-essential python-is-python3 python3-dev python3-pip pkg-config libglib2.0-dev
 
 RUN git clone --depth=1 --branch=v5.1.0 https://github.com/qemu/qemu /opt/qemu
 
@@ -17,7 +17,10 @@ RUN mkdir /opt/qtrace
 WORKDIR /opt/qtrace
 COPY . .
 
-RUN cd plugin && \
+RUN cd qemu_plugin && \
     make
 
-CMD python -u qtrace.py /bin/ls
+RUN pip3 install -e .
+
+ENV PYTHONUNBUFFERED=True
+CMD cd / && qtrace /bin/ls

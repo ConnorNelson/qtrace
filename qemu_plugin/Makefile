@@ -13,7 +13,7 @@ include $(BUILD_DIR)/config-host.mak
 VPATH += $(SRC_PATH)/contrib/plugins
 
 NAMES :=
-NAMES += tracer
+NAMES += qtrace
 
 SONAMES := $(addsuffix .so,$(addprefix lib,$(NAMES)))
 
