@@ -20,7 +20,7 @@ COPY . .
 RUN cd qemu_plugin && \
     make
 
-RUN pip3 install -e .
+RUN pip3 install .
 
 ENV PYTHONUNBUFFERED=True
 CMD cd / && qtrace /bin/ls

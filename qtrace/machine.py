@@ -4,14 +4,18 @@ import fcntl
 import select
 import termios
 import array
-import struct
 import enum
 import ctypes
 import subprocess
+import pathlib
 
 from . import syscalls
 
-QEMU_PATH = "/usr/local/bin/qemu-x86_64"
+DEPS_PATH = pathlib.Path(__file__).parent / "deps"
+LD_PATH = DEPS_PATH / "lib64" / "ld-linux-x86-64.so.2"
+LIBS_PATH = DEPS_PATH / "lib" / "x86_64-linux-gnu"
+QEMU_PATH = DEPS_PATH / "usr" / "local" / "bin" / "qemu-x86_64"
+QTRACE_PATH = DEPS_PATH / "libqtrace.so"
 TRACE_MAX_BB_ADDRS = 0x1000
 
 
@@ -72,14 +76,22 @@ class TraceMachine:
         trace_pipe_read_path = "/tmp/read"
         trace_pipe_write_path = "/tmp/write"
 
-        os.mkfifo(trace_pipe_read_path)
-        os.mkfifo(trace_pipe_write_path)
+        def create_pipe(path):
+            if os.path.exists(path):
+                os.unlink(path)
+            os.mkfifo(path)
+
+        create_pipe(trace_pipe_read_path)
+        create_pipe(trace_pipe_write_path)
 
         process = subprocess.Popen(
             [
+                LD_PATH,
+                "--library-path",
+                LIBS_PATH,
                 QEMU_PATH,
                 "-plugin",
-                f"/opt/qtrace/qemu_plugin/libqtrace.so,arg={trace_pipe_write_path},arg={trace_pipe_read_path}",
+                f"{QTRACE_PATH},arg={trace_pipe_write_path},arg={trace_pipe_read_path}",
                 *self.argv,
             ],
             stdout=subprocess.PIPE,
