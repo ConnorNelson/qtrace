@@ -32,7 +32,7 @@ def package_dependencies():
 setup(
     name="qtrace",
     version="0.1.0",
-    python_requires=">=3.8",
+    python_requires=">=3.6",
     packages=find_packages(),
     entry_points={
         "console_scripts": [
