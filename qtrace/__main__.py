@@ -29,9 +29,19 @@ def main():
     machine = LogTraceMachine(args)
     machine.run()
 
-    total_bb_addrs = sum(1 for event in machine.trace if event[0] == "bb")
-    unique_bb_addrs = len(set(event[1] for event in machine.trace if event[0] == "bb"))
-    print(f"\n\nTraced {total_bb_addrs} basic blocks ({unique_bb_addrs} unique)")
+    def total(filter_):
+        return len(list(machine.filtered_trace(filter_)))
+
+    def unique(filter_):
+        return len(set(machine.filtered_trace(filter_)))
+
+    print("\n\n")
+    for filter_, description in [
+        ("bb", "basic blocks"),
+        ("syscall_start", "syscalls"),
+        ("output", "outputs"),
+    ]:
+        print(f"Traced {total(filter_)} {description} ({unique(filter_)} unique)")
 
 
 if __name__ == "__main__":

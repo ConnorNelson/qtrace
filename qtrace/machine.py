@@ -148,18 +148,12 @@ class TraceMachine:
                 elif r == process.stdout:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)
                     data = os.read(r.fileno(), num_bytes[0])
-                    if data:
-                        sys.stdout.buffer.write(data)
-                    # else:
-                    #     sys.stdout.buffer.close()
+                    self.on_output(1, data)
 
                 elif r == process.stderr:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)
                     data = os.read(r.fileno(), num_bytes[0])
-                    if data:
-                        sys.stderr.buffer.write(data)
-                    # else:
-                    #     sys.stderr.buffer.close()
+                    self.on_output(2, data)
 
                 if not data:
                     r_list.remove(r)
@@ -168,14 +162,19 @@ class TraceMachine:
         self.trace.append(("bb", address))
 
     def on_syscall_start(self, syscall_nr, *args):
-        self.current_syscall = syscall_nr
-        self.current_syscall_args = args
+        self.trace.append(("syscall_start", syscall_nr, *args))
 
     def on_syscall_end(self, syscall_nr, ret):
-        assert syscall_nr == self.current_syscall
-        self.trace.append(("syscall", syscall_nr, self.current_syscall_args, ret))
-        del self.current_syscall
-        del self.current_syscall_args
+        self.trace.append(("syscall_end", syscall_nr, ret))
+
+    def on_output(self, fd, data):
+        self.trace.append(("output", fd, data))
+
+    def filtered_trace(self, filter_):
+        if isinstance(filter_, str):
+            filter_str = filter_
+            filter_ = lambda event: event[0] == filter_str
+        yield from (event for event in self.trace if filter_(event))
 
 
 class LogTraceMachine(TraceMachine):
@@ -202,5 +201,8 @@ class LogTraceMachine(TraceMachine):
 
     def on_syscall_end(self, syscall_nr, ret):
         super().on_syscall_end(syscall_nr, ret)
-
         print("=", self.syscall_int_fmt(ret))
+
+    def on_output(self, fd, data):
+        super().on_output(fd, data)
+        os.write(fd, data)
