@@ -3,16 +3,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
-#include <fcntl.h>
-#include <signal.h>
 #include <assert.h>
-#include <sys/sendfile.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include <qemu-plugin.h>
 
 #define TRACE_MAX_BB_ADDRS  0x1000
-#define TRACE_PIPE_READ     254
-#define TRACE_PIPE_WRITE    255
+#define TRACE_FD            255
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
@@ -57,8 +56,8 @@ static inline void trace_flush(enum reason reason, struct trace_info info) {
     trace.header.info = info;
 
     size = sizeof(trace.header) + (trace.header.num_addrs * sizeof(uint64_t));
-    assert(write(TRACE_PIPE_WRITE, &trace, size) == size);
-    assert(read(TRACE_PIPE_READ, &response, sizeof(response)) == sizeof(response));
+    assert(write(TRACE_FD, &trace, size) == size);
+    assert(read(TRACE_FD, &response, sizeof(response)) == sizeof(response));
 
     trace.header.reason = 0;
     trace.header.num_addrs = 0;
@@ -121,25 +120,25 @@ QEMU_PLUGIN_EXPORT
 int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info,
                         int argc, char **argv)
 {
-    int fd;
-    char *trace_pipe_read_path;
-    char *trace_pipe_write_path;
-    uint64_t data = 0;
-
-    assert(argc == 2);
-    trace_pipe_read_path = argv[0];
-    trace_pipe_write_path = argv[1];
+    int server_fd;
+    int client_fd;
+    struct sockaddr_in server_addr;
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    assert((fd = open(trace_pipe_write_path, O_WRONLY)) != -1);
-    assert(dup2(fd, TRACE_PIPE_WRITE) != -1);
-    assert(close(fd) != -1);
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &(int){1}, sizeof(int));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(4242);
+    bind(server_fd, (struct sockaddr *) &server_addr, sizeof(server_addr));
+    listen(server_fd, 1);
+    client_fd = accept(server_fd, NULL, NULL);
 
-    assert((fd = open(trace_pipe_read_path, O_RDONLY)) != -1);
-    assert(dup2(fd, TRACE_PIPE_READ) != -1);
-    assert(close(fd) != -1);
+    assert(dup2(client_fd, TRACE_FD) != -1);
+    assert(close(client_fd) != -1);
+    assert(close(server_fd) != -1);
 
     qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
     qemu_plugin_register_vcpu_syscall_cb(id, vcpu_syscall);

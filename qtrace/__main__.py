@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 from . import LogTraceMachine
 
@@ -26,6 +27,8 @@ def main():
         exit(1)
     args[0] = arg_0
 
+    start_time = time.time()
+
     machine = LogTraceMachine(args)
     machine.run()
 
@@ -42,6 +45,9 @@ def main():
         ("output", "outputs"),
     ]:
         print(f"Traced {total(filter_)} {description} ({unique(filter_)} unique)")
+
+    total_time = round(time.time() - start_time, 4)
+    print(f"Took {total_time}s")
 
 
 if __name__ == "__main__":

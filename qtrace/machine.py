@@ -6,6 +6,7 @@ import termios
 import array
 import enum
 import ctypes
+import socket
 import subprocess
 import pathlib
 
@@ -64,22 +65,13 @@ class TRACE(ctypes.Structure):
 
 
 class TraceMachine:
-    def __init__(self, argv):
+    def __init__(self, argv, *, trace_socket=None, std_streams=(None, None, None)):
         self.argv = argv
+        self.trace_socket = trace_socket
+        self.std_streams = std_streams
         self.trace = []
 
-    def run(self):
-        trace_pipe_read_path = "/tmp/read"
-        trace_pipe_write_path = "/tmp/write"
-
-        def create_pipe(path):
-            if os.path.exists(path):
-                os.unlink(path)
-            os.mkfifo(path)
-
-        create_pipe(trace_pipe_read_path)
-        create_pipe(trace_pipe_write_path)
-
+    def start(self):
         process = subprocess.Popen(
             [
                 LD_PATH,
@@ -87,17 +79,24 @@ class TraceMachine:
                 LIBS_PATH,
                 QEMU_PATH,
                 "-plugin",
-                f"{QTRACE_PATH},arg={trace_pipe_write_path},arg={trace_pipe_read_path}",
+                QTRACE_PATH,
                 *self.argv,
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
 
-        trace_pipe_read = open(trace_pipe_read_path, "rb")
-        trace_pipe_write = open(trace_pipe_write_path, "wb")
+        self.trace_socket = socket.create_connection(("localhost", 4242))
+        self.std_streams = (None, process.stdout, process.stderr)
 
-        r_list = [process.stdout, process.stderr, trace_pipe_read]
+    def run(self):
+        if not self.trace_socket:
+            self.start()
+
+        trace_socket = self.trace_socket
+        stdin, stdout, stderr = self.std_streams
+
+        r_list = [trace_socket, *filter(None, [stdout, stderr])]
         w_list = []
         x_list = []
         num_bytes = array.array("i", [0])
@@ -108,7 +107,7 @@ class TraceMachine:
             )
 
             for r in r_available:
-                if r == trace_pipe_read:
+                if r == trace_socket:
                     data = os.read(r.fileno(), ctypes.sizeof(TRACE_HEADER))
                     if data:
                         trace_header = TRACE_HEADER.from_buffer_copy(data)
@@ -116,7 +115,12 @@ class TraceMachine:
                         bb_addrs_size = trace_header.num_addrs * ctypes.sizeof(
                             bb_addr_type
                         )
-                        trace_data = os.read(r.fileno(), bb_addrs_size)
+
+                        trace_data = b""
+                        while len(trace_data) < bb_addrs_size:
+                            trace_data += os.read(
+                                r.fileno(), bb_addrs_size - len(trace_data)
+                            )
                         trace_addrs = (
                             trace_header.num_addrs * bb_addr_type
                         ).from_buffer_copy(trace_data)
@@ -143,14 +147,14 @@ class TraceMachine:
                             ret = trace_header.info.syscall_data.syscall_ret
                             self.on_syscall_end(syscall_nr, ret)
 
-                        os.write(trace_pipe_write.fileno(), b"\x00" * 8)
+                        os.write(trace_socket.fileno(), b"\x00" * 8)
 
-                elif r == process.stdout:
+                elif r == stdout:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)
                     data = os.read(r.fileno(), num_bytes[0])
                     self.on_output(1, data)
 
-                elif r == process.stderr:
+                elif r == stderr:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)
                     data = os.read(r.fileno(), num_bytes[0])
                     self.on_output(2, data)
