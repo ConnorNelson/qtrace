@@ -6,11 +6,21 @@ import termios
 import array
 import enum
 import ctypes
+import time
 import socket
 import subprocess
 import pathlib
+import contextlib
 
-from . import syscalls, syscall_description, LD_PATH, LIBS_PATH, QEMU_PATH, QTRACE_PATH
+from . import (
+    syscalls,
+    syscall_description,
+    GDB,
+    LD_PATH,
+    LIBS_PATH,
+    QEMU_PATH,
+    QTRACE_PATH,
+)
 
 
 TRACE_MAX_BB_ADDRS = 0x1000
@@ -78,6 +88,8 @@ class TraceMachine:
                 "--library-path",
                 LIBS_PATH,
                 QEMU_PATH,
+                "-g",
+                "1234",
                 "-plugin",
                 QTRACE_PATH,
                 *self.argv,
@@ -86,12 +98,23 @@ class TraceMachine:
             stderr=subprocess.PIPE,
         )
 
-        self.trace_socket = socket.create_connection(("localhost", 4242))
+        address = ("localhost", 4242)
+        for _ in range(10):
+            with contextlib.suppress(ConnectionRefusedError, OSError):
+                self.trace_socket = socket.create_connection(address)
+                break
+            time.sleep(1)
+        else:
+            raise ConnectionRefusedError("Failed to connect to qtrace's trace socket!")
+
         self.std_streams = (None, process.stdout, process.stderr)
 
     def run(self):
         if not self.trace_socket:
             self.start()
+
+        gdb = GDB("localhost", 1234)
+        gdb.detach()
 
         trace_socket = self.trace_socket
         stdin, stdout, stderr = self.std_streams
