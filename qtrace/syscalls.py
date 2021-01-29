@@ -1076,3 +1076,31 @@ x86_64 = [
 ]
 
 syscalls = {"x86_64": x86_64}
+
+
+def syscall_description(arch, syscall_nr=None, *args, ret=None):
+    def syscall_int_fmt(val):
+        if val <= 0x100:
+            return str(val)
+        elif (1 << 32) - 0x100 <= val < (1 << 32):
+            return str(val | (-(val & 0x80000000)))
+        else:
+            return hex(val)
+
+    result = ""
+
+    if syscall_nr is not None:
+        syscall_definition = syscalls[arch][syscall_nr]
+        syscall_name = syscall_definition[1]
+
+        if syscall_name.startswith("sys_"):
+            syscall_name = syscall_name[len("sys_") :]
+
+        description_inner = ", ".join(syscall_int_fmt(arg) for arg in args)
+        description = f"{syscall_name}({description_inner})"
+        result += description
+
+    if ret is not None:
+        result += f" = {syscall_int_fmt(ret)}"
+
+    return result

@@ -10,7 +10,7 @@ import socket
 import subprocess
 import pathlib
 
-from . import syscalls, LD_PATH, LIBS_PATH, QEMU_PATH, QTRACE_PATH
+from . import syscalls, syscall_description, LD_PATH, LIBS_PATH, QEMU_PATH, QTRACE_PATH
 
 
 TRACE_MAX_BB_ADDRS = 0x1000
@@ -182,30 +182,13 @@ class TraceMachine:
 
 
 class LogTraceMachine(TraceMachine):
-    def syscall_int_fmt(self, arg):
-        if arg <= 0x100:
-            return str(arg)
-        elif (1 << 32) - 0x100 <= arg < (1 << 32):
-            return str(arg | (-(arg & 0x80000000)))
-        else:
-            return hex(arg)
-
     def on_syscall_start(self, syscall_nr, *args):
         super().on_syscall_start(syscall_nr, *args)
-
-        syscall_definition = syscalls["x86_64"][syscall_nr]
-        syscall_name = syscall_definition[1]
-
-        if syscall_name.startswith("sys_"):
-            syscall_name = syscall_name[len("sys_") :]
-
-        description_inner = ", ".join(self.syscall_int_fmt(arg) for arg in args)
-        description = f"{syscall_name}({description_inner})"
-        print(description, end=" ")
+        print(syscall_description("x86_64", syscall_nr, *args), end=" ")
 
     def on_syscall_end(self, syscall_nr, ret):
         super().on_syscall_end(syscall_nr, ret)
-        print("=", self.syscall_int_fmt(ret))
+        print(syscall_description("x86_64", ret=ret).strip())
 
     def on_output(self, fd, data):
         super().on_output(fd, data)
