@@ -1,18 +1,9 @@
-import time
-import socket
-import contextlib
+from . import create_connection
 
 
 class GDB:
     def __init__(self, host, port):
-        address = (host, port)
-        for _ in range(10):
-            with contextlib.suppress(ConnectionRefusedError, OSError):
-                self.socket = socket.create_connection(address)
-                break
-            time.sleep(1)
-        else:
-            raise ConnectionRefusedError("Failed to connect to qtrace's gdb socket!")
+        self.socket = create_connection((host, port))
 
     def checksum(self, data):
         if isinstance(data, str):

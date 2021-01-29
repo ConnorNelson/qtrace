@@ -13,6 +13,7 @@ import pathlib
 import contextlib
 
 from . import (
+    create_connection,
     syscalls,
     syscall_description,
     GDB,
@@ -98,23 +99,15 @@ class TraceMachine:
             stderr=subprocess.PIPE,
         )
 
-        address = ("localhost", 4242)
-        for _ in range(10):
-            with contextlib.suppress(ConnectionRefusedError, OSError):
-                self.trace_socket = socket.create_connection(address)
-                break
-            time.sleep(1)
-        else:
-            raise ConnectionRefusedError("Failed to connect to qtrace's trace socket!")
+        self.trace_socket = create_connection(("localhost", 4242))
+        self.gdb = GDB("localhost", 1234)
+        self.gdb.detach()
 
         self.std_streams = (None, process.stdout, process.stderr)
 
     def run(self):
         if not self.trace_socket:
             self.start()
-
-        gdb = GDB("localhost", 1234)
-        gdb.detach()
 
         trace_socket = self.trace_socket
         stdin, stdout, stderr = self.std_streams
