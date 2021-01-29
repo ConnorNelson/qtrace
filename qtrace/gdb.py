@@ -34,6 +34,7 @@ class GDB:
             result += b
         checksum = int(self.socket.recv(2), 16)
         assert checksum == self.checksum(result)
+        self.socket.send(b"+")
         return result
 
     def continue_(self):
