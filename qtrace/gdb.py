@@ -1,3 +1,6 @@
+import collections
+import contextlib
+
 from . import create_connection
 
 amd64 = {
@@ -69,6 +72,8 @@ class GDB:
     def __init__(self, address, *, arch=amd64):
         self.socket = create_connection(address)
         self.arch = arch
+        self.registers = self.fetch_registers()
+        self.breakpoints = collections.defaultdict(list)
 
     def checksum(self, data):
         if isinstance(data, str):
@@ -80,7 +85,7 @@ class GDB:
         self.socket.send(f"${cmd}#{checksum:02x}".encode())
         assert self.socket.recv(1) == b"+"
 
-    def recv(self):
+    def recv(self, ok=False):
         assert self.socket.recv(1) == b"$"
         result = b""
         while True:
@@ -91,44 +96,57 @@ class GDB:
         checksum = int(self.socket.recv(2), 16)
         assert checksum == self.checksum(result)
         self.socket.send(b"+")
+        if ok:
+            assert result == b"OK"
         return result
 
     def continue_(self):
         self.send("c")
+        assert self.recv() == b"S05"
+        self.fetch_registers()
+        current_breakpoints = self.breakpoints[self.rip]
+        assert current_breakpoints
+        for callback in current_breakpoints:
+            callback()
 
     def detach(self):
         self.send("D")
-        assert self.recv() == b"OK"
+        self.recv(ok=True)
         self.socket.close()
 
-    def registers(self):
-        if not hasattr(self, "_registers"):
-            self.send("g")
-            response = self.recv()
-            hex_length = self.arch["bits"] >> 2
-            self._registers = {
-                reg: int.from_bytes(
-                    bytes.fromhex(
-                        response[i * hex_length : (i + 1) * hex_length].decode()
-                    ),
-                    self.arch["endian"],
-                )
-                for i, reg in enumerate(self.arch["regs"])
-            }
-        return self._registers
+    def fetch_registers(self, refresh=True):
+        self.send("g")
+        response = self.recv()
+        hex_length = self.arch["bits"] >> 2
+        self.registers = {
+            reg: int.from_bytes(
+                bytes.fromhex(response[i * hex_length : (i + 1) * hex_length].decode()),
+                self.arch["endian"],
+            )
+            for i, reg in enumerate(self.arch["regs"])
+        }
+        return self.registers
 
-    def memory(self, address, length):
+    def fetch_memory(self, address, length):
         self.send(f"m{address:x},{length}")
         response = self.recv()
         return bytes.fromhex(response.decode())
 
+    def break_(self, address, callback):
+        if not self.breakpoints[address]:
+            self.send(f"Z0,{address:x},2")
+            self.recv(ok=True)
+        self.breakpoints[address].append(callback)
+
     def __getitem__(self, key):
         if isinstance(key, str):
-            try:
-                return self.registers()[key]
-            except KeyError:
-                pass
+            with contextlib.suppress(KeyError):
+                return self.registers[key]
         elif isinstance(key, slice):
             if key.step is None:
-                return self.memory(key.start, key.stop - key.start)
+                return self.fetch_memory(key.start, key.stop - key.start)
         raise TypeError("Key must be a valid register or memory region")
+
+    def __getattr__(self, name):
+        with contextlib.suppress(KeyError):
+            return self.registers[name]
