@@ -100,7 +100,7 @@ class TraceMachine:
         )
 
         self.trace_socket = create_connection(("localhost", 4242))
-        self.gdb = GDB("localhost", 1234)
+        self.gdb = GDB(("localhost", 1234))
         self.gdb.detach()
 
         self.std_streams = (None, process.stdout, process.stderr)
