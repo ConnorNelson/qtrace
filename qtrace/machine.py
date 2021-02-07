@@ -109,10 +109,9 @@ class TraceMachine:
         if not self.trace_socket:
             self.start()
 
-        trace_socket = self.trace_socket
         stdin, stdout, stderr = self.std_streams
 
-        r_list = [trace_socket, *filter(None, [stdout, stderr])]
+        r_list = [self.trace_socket, *filter(None, [stdout, stderr])]
         w_list = []
         x_list = []
         num_bytes = array.array("i", [0])
@@ -123,7 +122,7 @@ class TraceMachine:
             )
 
             for r in r_available:
-                if r == trace_socket:
+                if r == self.trace_socket:
                     data = os.read(r.fileno(), ctypes.sizeof(TRACE_HEADER))
                     if data:
                         trace_header = TRACE_HEADER.from_buffer_copy(data)
@@ -147,7 +146,7 @@ class TraceMachine:
                             self.on_basic_block(address)
 
                         if reason == TRACE_REASON.trace_full:
-                            pass
+                            self.ack()
 
                         elif reason == TRACE_REASON.trace_syscall_start:
                             syscall_nr = trace_header.info.syscall_num
@@ -163,8 +162,6 @@ class TraceMachine:
                             ret = trace_header.info.syscall_data.syscall_ret
                             self.on_syscall_end(syscall_nr, ret)
 
-                        os.write(trace_socket.fileno(), b"\x00" * 8)
-
                 elif r == stdout:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)
                     data = os.read(r.fileno(), num_bytes[0])
@@ -178,14 +175,19 @@ class TraceMachine:
                 if not data:
                     r_list.remove(r)
 
+    def ack(self):
+        os.write(self.trace_socket.fileno(), b"\x00" * 8)
+
     def on_basic_block(self, address):
         self.trace.append(("bb", address))
 
     def on_syscall_start(self, syscall_nr, *args):
         self.trace.append(("syscall_start", syscall_nr, *args))
+        self.ack()
 
     def on_syscall_end(self, syscall_nr, ret):
         self.trace.append(("syscall_end", syscall_nr, ret))
+        self.ack()
 
     def on_output(self, fd, data):
         self.trace.append(("output", fd, data))
