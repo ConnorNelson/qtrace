@@ -1,0 +1,31 @@
+name: Publish to PyPi
+on:
+  workflow_dispatch:
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - uses: actions/setup-python@master
+    - uses: docker/setup-buildx-action@master
+    - name: Cache Docker Layers
+      uses: actions/cache@master
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+    - name: Docker Build
+      uses: docker/build-push-action@master
+      with:
+        tags: build_wheel:latest
+        load: true
+        cache-from: type=local,src=/tmp/.buildx-cache
+        cache-to: type=local,dest=/tmp/.buildx-cache
+    - name: Build Wheel
+      run: |
+        docker image ls
+        docker run --rm -v $PWD/dist:/dist build_wheel:latest
+    - uses: pypa/gh-action-pypi-publish@master
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}

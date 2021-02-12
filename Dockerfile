@@ -9,8 +9,8 @@ RUN git clone --depth=1 --branch=v5.1.0 https://github.com/qemu/qemu /opt/qemu
 WORKDIR /opt/qemu
 RUN mkdir build && \
     cd build && \
-    ../configure --disable-system --enable-linux-user --enable-plugins && \
-    make -j16 && \
+    ../configure --disable-system --enable-linux-user --enable-plugins --target-list=x86_64-linux-user && \
+    make -j$(nproc) && \
     make install
 
 RUN mkdir /opt/qtrace
@@ -20,7 +20,4 @@ COPY . .
 RUN cd qemu_plugin && \
     make
 
-RUN pip3 install .
-
-ENV PYTHONUNBUFFERED=True
-CMD cd / && qtrace /bin/ls
+CMD ["python", "setup.py", "bdist_wheel", "--dist-dir=/dist"]
