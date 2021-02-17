@@ -127,7 +127,17 @@ gdb_script_fd.flush()
 gdb_process = process(gdb_path + ' -x ' + gdb_script_fd.name, True)
 
 # Manually decide when to end things...
-IPython.embed()
+# IPython.embed()
+
+# Use debug output to trace (FIXME: integrate with existing binary trace stream, not this text parsing)
+while True:
+	l = p.recvline()
+	syscall_m = re.findall(r'syscall\((\d+)\)', l.decode('utf-8'))
+	if syscall_m:
+		print('syscall:' + str(syscall_m))
+	exec_m = re.findall(r'exec\((0x[a-fA-F0-9]+)\)', l.decode('utf-8'))
+	if exec_m:
+		print('exec:' + str(exec_m))
 
 gdb_process.kill()
 p.kill()

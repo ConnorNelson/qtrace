@@ -35,7 +35,7 @@
 #define TRACE_MAX_BB_ADDRS  0x1000
 #define TRACE_FD            255
 
-#define DEBUG 0
+#define DEBUG 1
 
 /*
  * Enable for version of memory-read API implementation which works on unpatched
@@ -89,10 +89,6 @@ static inline void trace_flush(enum reason reason, struct trace_info info) {
     assert(write(TRACE_FD, &trace, size) == size);
 #if 0
     assert(read(TRACE_FD, &response, sizeof(response)) == sizeof(response));
-#endif
-
-#if DEBUG
-    fprintf(stderr, "syscall(%ld)\n", trace.header.info.syscall_num);
 #endif
 
     trace.header.reason = 0;
@@ -217,6 +213,10 @@ static void vcpu_syscall(qemu_plugin_id_t id, unsigned int vcpu_index,
     info.syscall_a6 = a6;
     info.syscall_a7 = a7;
     info.syscall_a8 = a8;
+
+#if DEBUG
+    fprintf(stderr, "syscall(%ld)\n", num);
+#endif
 
     trace_flush(trace_syscall_start, info);
 }
