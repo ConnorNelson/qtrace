@@ -87,7 +87,7 @@ static inline void trace_flush(enum reason reason, struct trace_info info) {
 
     size = sizeof(trace.header) + (trace.header.num_addrs * sizeof(uint64_t));
     assert(write(TRACE_FD, &trace, size) == size);
-#if !DEBUG
+#if 0
     assert(read(TRACE_FD, &response, sizeof(response)) == sizeof(response));
 #endif
 
