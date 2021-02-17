@@ -12,7 +12,7 @@ import tempfile
 import IPython
 
 # pwntools debugging
-context.log_level = 'debug'
+# context.log_level = 'debug'
 
 images_base = '../../images'
 qemu = '../../qemu/build/arm-softmmu/qemu-system-arm'
