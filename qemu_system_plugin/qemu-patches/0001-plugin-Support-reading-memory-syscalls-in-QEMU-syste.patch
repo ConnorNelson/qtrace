@@ -1,0 +1,58 @@
+From f6e8049950bfffcf0b1ea7637dfd642b265ded36 Mon Sep 17 00:00:00 2001
+From: Matt Borgerson <contact@mborgerson.com>
+Date: Tue, 16 Feb 2021 20:17:00 -0700
+Subject: [PATCH] plugin: Support reading memory, syscalls in QEMU system
+
+---
+ include/qemu/qemu-plugin.h | 2 ++
+ plugins/api.c              | 5 +++++
+ target/arm/op_helper.c     | 6 ++++++
+ 3 files changed, 13 insertions(+)
+
+diff --git a/include/qemu/qemu-plugin.h b/include/qemu/qemu-plugin.h
+index bab8b0d4b3..82cc932399 100644
+--- a/include/qemu/qemu-plugin.h
++++ b/include/qemu/qemu-plugin.h
+@@ -410,4 +410,6 @@ int qemu_plugin_n_max_vcpus(void);
+  */
+ void qemu_plugin_outs(const char *string);
+ 
++bool qemu_plugin_mem_read(unsigned int vcpu_index, uint64_t vaddr, uint64_t len, void *data);
++
+ #endif /* QEMU_PLUGIN_API_H */
+diff --git a/plugins/api.c b/plugins/api.c
+index bbdc5a4eb4..0cb1653be2 100644
+--- a/plugins/api.c
++++ b/plugins/api.c
+@@ -303,6 +303,11 @@ uint64_t qemu_plugin_hwaddr_device_offset(const struct qemu_plugin_hwaddr *haddr
+     return 0;
+ }
+ 
++bool qemu_plugin_mem_read(unsigned int vcpu_index, uint64_t vaddr, uint64_t len, void *data)
++{
++    return cpu_memory_rw_debug(qemu_get_cpu(vcpu_index), vaddr, data, len, false) >= 0;
++}
++
+ /*
+  * Queries to the number and potential maximum number of vCPUs there
+  * will be. This helps the plugin dimension per-vcpu arrays.
+diff --git a/target/arm/op_helper.c b/target/arm/op_helper.c
+index ff91fe6121..2fd32555da 100644
+--- a/target/arm/op_helper.c
++++ b/target/arm/op_helper.c
+@@ -51,6 +51,12 @@ static CPUState *do_raise_exception(CPUARMState *env, uint32_t excp,
+     env->exception.syndrome = syndrome;
+     env->exception.target_el = target_el;
+ 
++    if (excp == EXCP_SWI) {
++        unsigned int n = env->regs[7]; // Assumption may not always hold!!
++        qemu_plugin_vcpu_syscall(cs, n, env->regs[0], env->regs[1],
++            env->regs[2], env->regs[3], env->regs[4], env->regs[5], 0, 0);
++    }
++
+     return cs;
+ }
+ 
+-- 
+2.25.1
+
