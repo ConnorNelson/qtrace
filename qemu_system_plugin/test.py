@@ -10,22 +10,52 @@ import pathlib
 import re
 import tempfile
 import IPython
+import struct
+import nclib
+from threading import Thread
 
 # pwntools debugging
-# context.log_level = 'debug'
+context.log_level = 'debug'
 
-images_base = '../../images'
-qemu = '../../qemu/build/arm-softmmu/qemu-system-arm'
-gdb_path = '../../buildroot-2020.02.9/output/build/host-gdb-8.2.1/gdb/gdb'
+images_base = '../images'
+qemu = '../qemu/build/arm-softmmu/qemu-system-arm'
+gdb_path = '../buildroot-2020.02.9/output/build/host-gdb-8.2.1/gdb/gdb'
 
 # Survey target binary to list of memory regions to test against to determine
 # if target binary is running in QEMU system
 target = 'crashing-http-server'
-e = ELF(target)
-args = ''
-for s in ['main']:
-	addr = e.symbols[s]
-	args += 'arg="%x=%s"' % (addr ,b64e(e.read(addr, 32)))
+
+MESSAGE_TYPE_START = 0
+MESSAGE_TYPE_TRACE = 1
+
+def send_start_msg(tracer, target_path):
+	e = ELF(target_path)
+
+	entry_addr = e.symbols['main']
+
+	regions = []
+	for s in ['main']:
+		addr = e.symbols[s]
+		regions.append((addr, e.read(addr, 32)))
+
+	msg = struct.pack('<QH', entry_addr, len(regions))
+	for (addr, data) in regions:
+		msg += struct.pack('<QH', addr, len(data)) + data
+
+	hdr_fmt = '<HH'
+	msg =  struct.pack(hdr_fmt, MESSAGE_TYPE_START,
+		               struct.calcsize(hdr_fmt) + len(msg)) + msg
+
+	tracer.send(msg)
+
+# We only get one message type back, keep it simple
+def recv_trace_msg(tracer):
+	msg_fmt = '<HHQ'
+	msg_expected_len = struct.calcsize(msg_fmt)
+	data = tracer.recv_exactly(msg_expected_len)
+	msg_type, msg_len, addr = struct.unpack(msg_fmt, data)
+	assert(msg_len == msg_expected_len)
+	return addr
 
 # QEMU launch params
 cmd = f'''{qemu} \
@@ -41,11 +71,28 @@ cmd = f'''{qemu} \
 '''
 
 # Launch QEMU system
-p = process(cmd, True)
+# p = process(cmd, True)
 
 # Connect to tracer
-sleep(0.5)
-tracer = remote('127.0.0.1', 4242)
+# sleep(0.5)
+
+class BlockTracer(Thread):
+	def __init__(self, remote, target):
+		super().__init__()
+		self.tracer = nclib.Netcat(remote)
+		send_start_msg(self.tracer, target)
+
+	def run(self):
+		while True:
+			addr = recv_trace_msg(self.tracer)
+			print(hex(addr))
+
+bt = BlockTracer(('127.0.0.1', 4242), target)
+bt.start()
+bt.join()
+
+exit(0)
+
 
 # Wait for login prompt
 p.recvuntil('login:')

@@ -7,7 +7,7 @@
 #
 
 # BUILD_DIR := /opt/qemu/build
-BUILD_DIR := ../../qemu/build
+BUILD_DIR := ../qemu/build
 
 include $(BUILD_DIR)/config-host.mak
 
@@ -24,6 +24,7 @@ CFLAGS = $(GLIB_CFLAGS)
 CFLAGS += -fPIC
 CFLAGS += $(if $(findstring no-psabi,$(QEMU_CFLAGS)),-Wpsabi)
 CFLAGS += -I$(SRC_PATH)/include/qemu
+CFLAGS += -Wall
 
 all: $(SONAMES)
 

@@ -6,200 +6,292 @@
  * processes running in the system, this plugin supports a simple virtual memory
  * matching test.
  *
- * When launching the plugin, specify one or more <addr>=<data> arguments for
- * the plugin, where <addr> is the hex virtual memory address and <data> are the
- * base64 encoded bytes to check.
- *
- * Before attempting to perform QEMU system based tracing, make sure to apply
- * the patch that accompanies this plugin, which adds support for reading memory
- *
- * - Apply patches in qemu-patches to QEMU v5.2.0
- * - Build this plugin
- * - When launching QEMU, add plugin and plugin arguments as follows:
- *   -plugin file=$PWD/libqtrace.so,arg="<addr>=<data>"
  */
 
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <inttypes.h>
-#include <assert.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <arpa/inet.h>
-#include <glib.h>
-#include <glib/gi18n.h>
+#include <assert.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <poll.h>
 #include <qemu-plugin.h>
-
-#define TRACE_MAX_BB_ADDRS  0x1000
-#define TRACE_FD            255
 
 #define DEBUG 1
 
-/*
- * Enable for version of memory-read API implementation which works on unpatched
- * QEMU. This is dangerous, however...
- */
-#define NO_PATCH_HACK 0
+#ifdef DEBUG
+#define DPRINTF(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+#define DPRINTF(...) do { } while (0)
+#endif
+
+#define MAX(a,b) ((a)>(b)?(a):(b))
 
 QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
-enum reason {
-    trace_full = 0,
-    trace_syscall_start = 1,
-    trace_syscall_end = 2,
+#pragma pack(push, 1)
+
+enum {
+    MESSAGE_TYPE_START,
+    MESSAGE_TYPE_TRACE,
 };
 
-struct trace_info {
-    int64_t syscall_num;
-    union {
-        struct {
-            uint64_t syscall_a1;
-            uint64_t syscall_a2;
-            uint64_t syscall_a3;
-            uint64_t syscall_a4;
-            uint64_t syscall_a5;
-            uint64_t syscall_a6;
-            uint64_t syscall_a7;
-            uint64_t syscall_a8;
-        };
-        int64_t syscall_ret;
-    };
-};
-#define EMPTY_INFO (const struct trace_info) { 0 }
+typedef struct {
+    uint16_t msg_type;
+    uint16_t msg_len;
+} Message;
 
-struct {
-    struct {
-        enum reason reason;
-        uint64_t num_addrs;
-        struct trace_info info;
-    } header;
-    uint64_t bb_addrs[TRACE_MAX_BB_ADDRS];
-} trace;
-
-static inline void trace_flush(enum reason reason, struct trace_info info) {
-    size_t size;
-    uint64_t response;
-
-    trace.header.reason = reason;
-    trace.header.info = info;
-
-    size = sizeof(trace.header) + (trace.header.num_addrs * sizeof(uint64_t));
-    assert(write(TRACE_FD, &trace, size) == size);
-#if 0
-    assert(read(TRACE_FD, &response, sizeof(response)) == sizeof(response));
-#endif
-
-    trace.header.reason = 0;
-    trace.header.num_addrs = 0;
-    trace.header.info = EMPTY_INFO;
-}
-
-static inline void trace_add_bb_addr(uint64_t addr)
-{
-    trace.bb_addrs[trace.header.num_addrs++] = addr;
-    if (trace.header.num_addrs == TRACE_MAX_BB_ADDRS)
-        trace_flush(trace_full, EMPTY_INFO);
-}
-
-/*
- * Rudimentary test to check if target process is currently running: "Memory
- * Check" structure, which specifies a simple virtual memory byte-match test to
- * determine whether a particular callback should occur or not.
- */
-struct mem_check {
+typedef struct {
     uint64_t addr;
-    gsize len;
-    const guchar *data;
-};
-static struct mem_check *mem_checks;
+    uint16_t len;
+    uint8_t  data[];
+} CheckedRegion;
+
+typedef struct {
+    Message hdr;
+    uint64_t entry_addr;
+    uint16_t num_regions;
+    /* CheckedRegion entries follow... */
+} MessageStart;
+
+typedef struct {
+    Message hdr;
+    uint64_t addr;
+} MessageTrace;
+
+#pragma pack(pop)
+
+static CheckedRegion *mem_checks;
 static size_t num_mem_checks;
 static char *mem_check_buf;
-static int mem_check_buf_size = 0;
 
-#if NO_PATCH_HACK
-typedef uint32_t target_ulong; // Target-dependent! Same size as virtual address
-void *qemu_get_cpu(int index);
-int cpu_memory_rw_debug(void *cpu, target_ulong addr, void *ptr, target_ulong len, bool is_write);
-bool qemu_plugin_mem_read__hack(unsigned int vcpu_index, uint64_t vaddr, uint64_t len, void *data) {
-    return cpu_memory_rw_debug(qemu_get_cpu(vcpu_index), vaddr, data, len, false) >= 0;
-}
-#define qemu_plugin_mem_read qemu_plugin_mem_read__hack
-#endif
+static uint64_t entry_addr;
+static bool reached_start;
 
-/*
- * Decode one of the plugin command line arguments specifying a mem check
- */
-static void decode_mem_check(char *s)
+static int server_fd;
+static int client_fd = -1;
+
+static void handle_start_msg(MessageStart *msg);
+
+static
+bool read_all(void *buf, size_t count)
 {
-    struct mem_check c;
+    for (size_t bytes_read = 0; bytes_read < count;) {
+        ssize_t l = read(client_fd, (char*)buf+bytes_read, count-bytes_read);
+        if (l <= 0) return false;
+        bytes_read += l;
+    }
+    return true;
+}
 
-    /* Decode check argument */
-    if (sscanf(s, "%lx=", &c.addr) != 1) return;
-    char *data_b64 = strchr(s, '=') + 1;
-    if (!*data_b64) return;
-    c.data = g_base64_decode(data_b64, &c.len);
-    if (c.len == 0) return;
+static
+Message *recv_msg(void)
+{
+    Message hdr;
+    if (!read_all(&hdr, sizeof(hdr))) return NULL;
+    if (hdr.msg_len < sizeof(hdr)) return NULL;
 
-    num_mem_checks++;
+    Message *msg = malloc(hdr.msg_len);
+    if (msg == NULL) return NULL;
+    memcpy(msg, &hdr, sizeof(hdr));
+    if (!read_all(msg+1, hdr.msg_len-sizeof(hdr))) {
+        free(msg);
+        return NULL;
+    }
+    return msg;
+}
 
-    /* Reallocate temporary check buffer to maximum check length */
-    if (c.len > mem_check_buf_size) {
-        mem_check_buf = realloc(mem_check_buf, c.len);
-        assert(mem_check_buf != NULL);
+static
+bool fd_pollin(int fd)
+{
+    int events = POLLIN | POLLERR | POLLHUP | POLLNVAL;
+    struct pollfd pfd = { .fd = fd, .events = events, .revents = 0 };
+    return (poll(&pfd, 1, 0) > 0) && (pfd.revents & events);
+}
+
+static
+void recv_msgs(void)
+{
+    if (client_fd < 0) {
+        if (!fd_pollin(server_fd)) return; /* No connections pending */
+        DPRINTF("New conn\n");
+        client_fd = accept(server_fd, NULL, NULL);
     }
 
-    /* Add check */
-    mem_checks = reallocarray(mem_checks, num_mem_checks, sizeof(c));
-    mem_checks[num_mem_checks-1] = c;
+    if (!fd_pollin(client_fd)) return; /* No messages pending */
+
+    Message *msg = recv_msg();
+    if (msg == NULL) {
+        DPRINTF("Disconnecting\n");
+        close(client_fd);
+        client_fd = -1;
+        return;
+    }
+    if (msg->msg_type == MESSAGE_TYPE_START) {
+        handle_start_msg((MessageStart*)msg);
+    }
+    free(msg);
+}
+
+static
+bool write_all(const void *buf, size_t count)
+{
+    for (size_t bytes_written = 0; bytes_written < count;) {
+        ssize_t l = write(client_fd, (char*)buf+bytes_written, count-bytes_written);
+        if (l < 0) return false;
+        bytes_written += l;
+    }
+    return true;
+}
+
+static
+bool send_msg(Message *msg)
+{
+    if (!write_all(msg, msg->msg_len)) {
+        DPRINTF("Send failed...Disconnecting\n");
+        close(client_fd);
+        client_fd = -1;
+        return false;
+    }
+    return true;
+}
+
+static
+void handle_start_msg(MessageStart *msg)
+{
+    size_t max_region_len = 0;
+
+    /* Validate memory checks */
+    char *end = (char*)msg + msg->hdr.msg_len;
+    CheckedRegion *r = (CheckedRegion *)(msg+1);
+    for (int i = 0; i < msg->num_regions; i++) {
+        assert((char*)r < end);
+        max_region_len = MAX(max_region_len, r->len);
+        DPRINTF("Checked Region %d: %lx (%d bytes)\n", i, r->addr, r->len);
+
+        /* Move to next region, make sure it doesn't put us outside the msg */
+        r = (CheckedRegion *)((char *)r + sizeof(r) + r->len);
+        assert((char*)r <= end);
+    }
+
+    /* Reallocate memory checks buffer and copy all checks over */
+    size_t mem_checks_len = msg->hdr.msg_len - sizeof(MessageStart);
+    mem_checks = realloc(mem_checks, mem_checks_len);
+    assert(mem_checks != NULL);
+    memcpy(mem_checks, msg+1, mem_checks_len);
+    num_mem_checks = msg->num_regions;
+    entry_addr = msg->entry_addr;
+
+    mem_check_buf = realloc(mem_check_buf, max_region_len);
+
+    reached_start = false;
+
+    /* FIXME: Ideally this would flush the TLB */
+}
+
+static
+bool send_trace_msg(uint64_t addr)
+{
+    if (client_fd < 0) return false;
+
+    static MessageTrace msg = {
+        .hdr = { .msg_type = MESSAGE_TYPE_TRACE, .msg_len = sizeof(MessageTrace) }
+    };
+
+    msg.addr = addr;
+    return send_msg((Message*)&msg);
+}
+
+static
+void begin_listening(void)
+{
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket");
+        assert(0);
+    }
+
+    int tmp = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &tmp, sizeof(tmp));
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(4242);
+    if (bind(server_fd, (struct sockaddr *) &addr, sizeof(addr))) {
+        perror("bind");
+        assert(0);
+    }
+
+    if (listen(server_fd, 1)) {
+        perror("listen");
+        assert(0);
+    }
 }
 
 /*
  * Determine if this particular callback (TB translate, exec) should execute
  * based on whether the target process is loaded or not.
  */
-static bool should_instrument(void)
+static
+bool target_found_in_memory(void)
 {
+    CheckedRegion *c = mem_checks;
     for (size_t i = 0; i < num_mem_checks; i++) {
-        struct mem_check *c = &mem_checks[i];
         if (!qemu_plugin_mem_read(0, c->addr, c->len, mem_check_buf))
             return false; /* Failed to read */
         if (memcmp(c->data, mem_check_buf, c->len))
             return false; /* Mismatch */
+
+        c = (CheckedRegion *)((char *)c + sizeof(c) + c->len);
     }
 
     return true;
 }
 
-static void vcpu_tb_exec(unsigned int cpu_index, void *udata)
+static
+void vcpu_tb_exec(unsigned int cpu_index, void *udata)
 {
-    if (!should_instrument()) return;
+    recv_msgs();
+    if ((num_mem_checks == 0) || !target_found_in_memory()) {
+        return;
+    }
 
     uint64_t addr = (uint64_t) udata;
-
-#if DEBUG
-    fprintf(stderr, "exec(0x%lx)\n", addr);
-#endif
-
-    trace_add_bb_addr(addr);
+    reached_start |= (addr == entry_addr);
+    if (reached_start) {
+        DPRINTF("exec(0x%lx)\n", addr);
+        send_trace_msg(addr);
+    }
 }
 
-static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
+static
+void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 {
-    if (!should_instrument()) return;
+    recv_msgs();
+    if ((num_mem_checks == 0) || !target_found_in_memory()) {
+        return;
+    }
 
     uint64_t addr = qemu_plugin_tb_vaddr(tb);
-
     qemu_plugin_register_vcpu_tb_exec_cb(tb, vcpu_tb_exec,
                                          QEMU_PLUGIN_CB_NO_REGS,
                                          (void *) addr);
+
 }
 
-static void vcpu_syscall(qemu_plugin_id_t id, unsigned int vcpu_index,
-                         int64_t num, uint64_t a1, uint64_t a2,
-                         uint64_t a3, uint64_t a4, uint64_t a5,
-                         uint64_t a6, uint64_t a7, uint64_t a8)
+#if 0
+static
+void vcpu_syscall(qemu_plugin_id_t id, unsigned int vcpu_index,
+                  int64_t num, uint64_t a1, uint64_t a2,
+                  uint64_t a3, uint64_t a4, uint64_t a5,
+                  uint64_t a6, uint64_t a7, uint64_t a8)
 {
     if (!should_instrument()) return;
 
@@ -214,56 +306,36 @@ static void vcpu_syscall(qemu_plugin_id_t id, unsigned int vcpu_index,
     info.syscall_a7 = a7;
     info.syscall_a8 = a8;
 
-#if DEBUG
-    fprintf(stderr, "syscall(%ld)\n", num);
-#endif
-
-    trace_flush(trace_syscall_start, info);
+    DPRINTF("syscall(%ld)\n");
 }
 
-static void vcpu_syscall_ret(qemu_plugin_id_t id, unsigned int vcpu_index,
-                             int64_t num, int64_t ret)
+static
+void vcpu_syscall_ret(qemu_plugin_id_t id, unsigned int vcpu_index, int64_t num,
+                      int64_t ret)
 {
     if (!should_instrument()) return;
 
     struct trace_info info;
     info.syscall_num = num;
     info.syscall_ret = ret;
-
-    trace_flush(trace_syscall_end, info);
 }
+#endif
 
 QEMU_PLUGIN_EXPORT
 int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info,
                         int argc, char **argv)
 {
-    int server_fd;
-    int client_fd;
-    struct sockaddr_in server_addr;
-
-    for (int i = 0; i < argc; i++) {
-        decode_mem_check(argv[i]);
-    }
-
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &(int){1}, sizeof(int));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(4242);
-    bind(server_fd, (struct sockaddr *) &server_addr, sizeof(server_addr));
-    listen(server_fd, 1);
-    client_fd = accept(server_fd, NULL, NULL);
-
-    assert(dup2(client_fd, TRACE_FD) != -1);
-    assert(close(client_fd) != -1);
-    assert(close(server_fd) != -1);
-
     qemu_plugin_register_vcpu_tb_trans_cb(id, vcpu_tb_trans);
+
+#if 0
     qemu_plugin_register_vcpu_syscall_cb(id, vcpu_syscall);
     qemu_plugin_register_vcpu_syscall_ret_cb(id, vcpu_syscall_ret);
+#endif
+
+    begin_listening();
 
     return 0;
 }
