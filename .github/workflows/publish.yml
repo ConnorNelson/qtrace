@@ -22,15 +22,13 @@ jobs:
     - name: Docker Build
       uses: docker/build-push-action@master
       with:
-        tags: qtrace:build
-        file: ./Dockerfile.build
+        tags: qtrace:latest
         load: true
         cache-from: type=local,src=/tmp/.buildx-cache
         cache-to: type=local,dest=/tmp/.buildx-cache
     - name: Build Wheel
       run: |
-        docker image ls
-        docker run --rm -v $PWD/dist:/dist qtrace:build
+        docker run --rm -v $PWD/dist:/dist qtrace:latest
     - uses: pypa/gh-action-pypi-publish@master
       with:
         password: ${{ secrets.PYPI_API_TOKEN }}

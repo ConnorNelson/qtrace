@@ -17,20 +17,10 @@ jobs:
     - name: Docker Build
       uses: docker/build-push-action@master
       with:
-        tags: qtrace:build
-        file: ./Dockerfile.build
-        load: true
-        cache-from: type=local,src=/tmp/.buildx-cache
-        cache-to: type=local,dest=/tmp/.buildx-cache
-    - name: Docker Build Tests
-      uses: docker/build-push-action@master
-      with:
-        tags: qtrace:test
-        file: ./Dockerfile.test
+        tags: qtrace:latest
         load: true
         cache-from: type=local,src=/tmp/.buildx-cache
         cache-to: type=local,dest=/tmp/.buildx-cache
     - name: Run Tests
       run: |
-        docker image ls
-        docker run -t --rm qtrace:test
+        docker run -t --rm qtrace:latest

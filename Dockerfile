@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:20.04 AS build
 
 ENV DEBIAN_FRONTEND noninteractive
 RUN apt-get update && \
@@ -15,11 +15,32 @@ RUN mkdir build && \
 
 RUN mkdir /opt/qtrace
 WORKDIR /opt/qtrace
-COPY . .
+
+COPY qemu_plugin ./qemu_plugin
 
 RUN cd qemu_plugin && \
     make
 
+COPY setup.py .
+COPY qtrace ./qtrace
+
 RUN python setup.py bdist_wheel
 
 CMD ["cp", "-r", "dist", "/dist"]
+
+FROM ubuntu:20.04 AS test
+
+ENV DEBIAN_FRONTEND noninteractive
+RUN apt-get update && \
+    apt-get install -y gdb python-is-python3 python3-dev python3-pip
+
+RUN pip install pytest
+
+COPY --from=build /opt/qtrace/dist /tmp/dist
+RUN pip install /tmp/dist/qtrace-*.whl
+
+COPY tests /tests
+
+COPY docker-entrypoint.sh .
+
+CMD ./docker-entrypoint.sh
