@@ -8,6 +8,7 @@ import enum
 import ctypes
 import time
 import socket
+import threading
 import subprocess
 import pathlib
 import contextlib
@@ -31,6 +32,7 @@ class TRACE_REASON(enum.Enum):
     trace_full = 0
     trace_syscall_start = 1
     trace_syscall_end = 2
+    trace_async = 3
 
 
 class SYSCALL_START_DATA(ctypes.Structure):
@@ -81,6 +83,7 @@ class TraceMachine:
         self.trace_socket = trace_socket
         self.std_streams = std_streams
         self.trace = []
+        self.async_flushing = threading.Semaphore(0)
 
     @property
     def breakpoints(self):
@@ -121,6 +124,8 @@ class TraceMachine:
 
         for callback in self.breakpoints:
 
+            machine = self
+
             class Breakpoint(self.gdb.Breakpoint):
                 def __init__(self, callback):
                     self.callback = callback
@@ -129,6 +134,7 @@ class TraceMachine:
 
                 def stop(self):
                     try:
+                        machine.flush()
                         return self.callback()
                     except Exception as e:
                         # TODO: this runs in a separate thread, figure out how to correctly handle exceptions
@@ -192,6 +198,10 @@ class TraceMachine:
                             ret = trace_header.info.syscall_data.syscall_ret
                             self.on_syscall_end(syscall_nr, ret)
 
+                        elif reason == TRACE_REASON.trace_async:
+                            self.ack()
+                            self.async_flushing.release()
+
                 elif r == stdout:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)
                     data = os.read(r.fileno(), num_bytes[0])
@@ -206,7 +216,11 @@ class TraceMachine:
                     r_list.remove(r)
 
     def ack(self):
-        os.write(self.trace_socket.fileno(), b"\x00" * 8)
+        os.write(self.trace_socket.fileno(), (0).to_bytes(8, "little"))
+
+    def flush(self):
+        os.write(self.trace_socket.fileno(), (1).to_bytes(8, "little"))
+        self.async_flushing.acquire()
 
     def on_basic_block(self, address):
         self.trace.append(("bb", address))
