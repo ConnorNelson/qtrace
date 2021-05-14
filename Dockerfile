@@ -41,6 +41,8 @@ RUN pip install /tmp/dist/qtrace-*.whl
 
 COPY tests /tests
 
+RUN cd /tests/programs && make
+
 COPY docker-entrypoint.sh .
 
 CMD ./docker-entrypoint.sh

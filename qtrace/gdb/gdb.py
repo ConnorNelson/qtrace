@@ -167,7 +167,8 @@ def gdb(gdb_args, *, expose_extra=None):
 
 def breakpoint(address):
     if isinstance(address, int):
-        address = f"*{hex(address)}"
+        address = hex(address)
+    address = f"*{address}"
 
     def wrapper(func):
         func.gdb_breakpoint = address

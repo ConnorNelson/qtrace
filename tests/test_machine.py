@@ -1,31 +1,31 @@
+import pathlib
+
 import qtrace
 
 
-def test_gdb():
+programs_dir = pathlib.Path(__file__).parent / "programs"
+
+
+def test_machine():
     class TestMachine(qtrace.TraceMachine):
-        @qtrace.breakpoint(0x400180D103)
-        def on_D103(self):
-            self.results = {
+        @qtrace.breakpoint("factorial")
+        def on_factorial(self):
+            results = {
                 "rax": self.gdb.rax,
                 "rbx": self.gdb.rbx,
                 "rcx": self.gdb.rcx,
                 "rdx": self.gdb.rdx,
+                "rdi": self.gdb.rdi,
+                "rsi": self.gdb.rsi,
                 "rsp": self.gdb.rsp,
                 "rip": self.gdb.rip,
                 "instructions": self.gdb.memory[self.gdb.rip : self.gdb.rip + 8],
                 "stack": self.gdb.memory[self.gdb.rsp : self.gdb.rsp + 8],
             }
+            self.trace.append(("test", results))
 
-    machine = TestMachine(["/bin/false"])
+    machine = TestMachine([programs_dir / "factorial", str(7)])
     machine.run()
 
-    assert machine.results == {
-        "rax": 0x0,
-        "rbx": 0x0,
-        "rcx": 0x0,
-        "rdx": 0x0,
-        "rsp": 0x400180BD70,
-        "rip": 0x400180D103,
-        "instructions": b"\xe8\xe8\x0c\x00\x00I\x89\xc4",
-        "stack": b"\x01\x00\x00\x00\x00\x00\x00\x00",
-    }
+    factorial_args = [e[1]["rdi"] for e in machine.filtered_trace("test")]
+    assert factorial_args == [7, 6, 5, 4, 3, 2, 1, 0]

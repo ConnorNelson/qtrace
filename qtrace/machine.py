@@ -114,7 +114,7 @@ class TraceMachine:
         )
 
         self.trace_socket = create_connection(("localhost", 4242))
-        self.gdb = gdb(("-ex", "target remote localhost:1234"))
+        self.gdb = gdb(("-ex", "target remote localhost:1234", self.argv[0]))
 
         self.std_streams = (None, process.stdout, process.stderr)
 
