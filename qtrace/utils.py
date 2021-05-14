@@ -3,7 +3,7 @@ import socket
 import contextlib
 
 
-def create_connection(address, *, num_attempts=8, sleep_time=1):
+def create_connection(address, *, num_attempts=64, sleep_time=0.001):
     for _ in range(num_attempts):
         with contextlib.suppress(ConnectionRefusedError, OSError):
             return socket.create_connection(address)

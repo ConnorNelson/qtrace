@@ -16,7 +16,7 @@ from . import (
     create_connection,
     syscalls,
     syscall_description,
-    GDB,
+    gdb,
     LD_PATH,
     LIBS_PATH,
     QEMU_PATH,
@@ -82,6 +82,17 @@ class TraceMachine:
         self.std_streams = std_streams
         self.trace = []
 
+    @property
+    def breakpoints(self):
+        result = []
+        for name in dir(self):
+            if name == "breakpoints":
+                continue
+            value = getattr(self, name)
+            if hasattr(value, "gdb_breakpoint"):
+                result.append(value)
+        return result
+
     def start(self):
         process = subprocess.Popen(
             [
@@ -100,14 +111,33 @@ class TraceMachine:
         )
 
         self.trace_socket = create_connection(("localhost", 4242))
-        self.gdb = GDB(("localhost", 1234))
-        self.gdb.detach()
+        self.gdb = gdb(("-ex", "target remote localhost:1234"))
 
         self.std_streams = (None, process.stdout, process.stderr)
 
     def run(self):
         if not self.trace_socket:
             self.start()
+
+        for callback in self.breakpoints:
+
+            class Breakpoint(self.gdb.Breakpoint):
+                def __init__(self, callback):
+                    self.callback = callback
+                    address = callback.gdb_breakpoint
+                    super().__init__(address)
+
+                def stop(self):
+                    try:
+                        return self.callback()
+                    except Exception as e:
+                        # TODO: this runs in a separate thread, figure out how to correctly handle exceptions
+                        print(f"ERROR: {e}")
+                        exit(1)
+
+            Breakpoint(callback)
+
+        self.gdb.continue_nowait()
 
         stdin, stdout, stderr = self.std_streams
 

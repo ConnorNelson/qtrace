@@ -1,12 +1,7 @@
-name: Publish to PyPi
-on:
-  release:
-    types: [created]
-  push:
-    tags:
-      - 'v*'
+name: Run tests
+on: [push]
 jobs:
-  publish:
+  test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
@@ -27,10 +22,15 @@ jobs:
         load: true
         cache-from: type=local,src=/tmp/.buildx-cache
         cache-to: type=local,dest=/tmp/.buildx-cache
-    - name: Build Wheel
+    - name: Docker Build Tests
+      uses: docker/build-push-action@master
+      with:
+        tags: qtrace:test
+        file: ./Dockerfile.test
+        load: true
+        cache-from: type=local,src=/tmp/.buildx-cache
+        cache-to: type=local,dest=/tmp/.buildx-cache
+    - name: Run Tests
       run: |
         docker image ls
-        docker run --rm -v $PWD/dist:/dist qtrace:build
-    - uses: pypa/gh-action-pypi-publish@master
-      with:
-        password: ${{ secrets.PYPI_API_TOKEN }}
+        docker run -t --rm qtrace:test

@@ -40,4 +40,5 @@ setup(
         ]
     },
     package_data={"qtrace": list(package_dependencies())},
+    install_requires=["rpyc"],
 )

@@ -20,4 +20,6 @@ COPY . .
 RUN cd qemu_plugin && \
     make
 
-CMD ["python", "setup.py", "bdist_wheel", "--dist-dir=/dist"]
+RUN python setup.py bdist_wheel
+
+CMD ["cp", "-r", "dist", "/dist"]

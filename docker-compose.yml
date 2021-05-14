@@ -1,0 +1,14 @@
+version: '3.4'
+
+services:
+  qtrace_build:
+    image: qtrace:build
+    build:
+      context: ./
+      dockerfile: Dockerfile.build
+
+  qtrace_test:
+    image: qtrace:test
+    build:
+      context: ./
+      dockerfile: Dockerfile.test
