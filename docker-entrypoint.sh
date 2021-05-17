@@ -1,5 +1,5 @@
 if [ -d /dist ]; then
     cp /tmp/dist/qtrace-*.whl /dist
 else
-    pytest -v /tests
+    pytest -v --durations=0 /tests
 fi

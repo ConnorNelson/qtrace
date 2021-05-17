@@ -18,6 +18,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 struct trace trace;
 sem_t trace_mutex;
 sem_t ack_mutex;
+sem_t flush_mutex;
 
 
 static void unlocked_trace_flush(enum reason reason, struct trace_info info) {
@@ -94,15 +95,9 @@ static void vcpu_syscall_ret(qemu_plugin_id_t id, unsigned int vcpu_index,
     trace_flush(trace_syscall_end, info);
 }
 
-static void *async_trace_flush(void *arg)
-{
-    trace_flush(trace_async, EMPTY_INFO);
-}
-
 static void *handle_client(void *arg)
 {
     uint64_t response;
-    pthread_t flush_thread;
 
     while (true) {
         assert(read(TRACE_FD, &response, sizeof(response)) == sizeof(response));
@@ -112,12 +107,20 @@ static void *handle_client(void *arg)
             sem_post(&ack_mutex);
             break;
         case RESPONSE_FLUSH:
-            pthread_create(&flush_thread, NULL, async_trace_flush, NULL);
+            sem_post(&flush_mutex);
             break;
         default:
             assert(false);
             break;
         }
+    }
+}
+
+static void *handle_flush(void *arg)
+{
+    while (true) {
+        sem_wait(&flush_mutex);
+        trace_flush(trace_async, EMPTY_INFO);
     }
 }
 
@@ -129,6 +132,7 @@ int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info,
     int client_fd;
     struct sockaddr_in server_addr;
     pthread_t client_thread;
+    pthread_t flush_thread;
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -152,8 +156,10 @@ int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info,
 
     sem_init(&trace_mutex, 0, 1);
     sem_init(&ack_mutex, 0, 0);
+    sem_init(&flush_mutex, 0, 0);
 
     pthread_create(&client_thread, NULL, handle_client, NULL);
+    pthread_create(&flush_thread, NULL, handle_flush, NULL);
 
     return 0;
 }
