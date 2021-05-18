@@ -75,24 +75,19 @@ class TRACE(ctypes.Structure):
 
 
 class TraceMachine:
-    def __init__(
-        self,
-        argv,
-        *,
-        trace_socket=None,
-        std_streams=(None, None, None),
-        gdb_client=None,
-    ):
+    def __init__(self, argv, *, gdb_client=None):
         if gdb_client is None:
             gdb_client = gdb_minimal_client
 
         self.argv = argv
-        self.trace_socket = trace_socket
-        self.std_streams = std_streams
         self.gdb_client = gdb_client
         self.trace = []
         self.maps = {}
         self.async_flushing = threading.Semaphore(0)
+
+        self.trace_socket = None
+        self.gdb = None
+        self.std_streams = None
 
     @property
     def breakpoints(self):
@@ -118,18 +113,17 @@ class TraceMachine:
                 QTRACE_PATH,
                 *self.argv,
             ],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
 
         self.trace_socket = create_connection(("localhost", 4242))
         self.gdb = self.gdb_client(("localhost", 1234), self)
-        self.std_streams = (None, process.stdout, process.stderr)
+        self.std_streams = (process.stdin, process.stdout, process.stderr)
 
     def run(self):
-        if not self.trace_socket:
-            self.start()
-
+        self.start()
         self.update_maps()
 
         for callback in self.breakpoints:
