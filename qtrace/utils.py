@@ -9,4 +9,4 @@ def create_connection(address, *, num_attempts=64, sleep_time=0.001):
             return socket.create_connection(address)
         time.sleep(sleep_time)
     else:
-        raise ConnectionRefusedError("Failed to connect to qtrace's trace socket!")
+        raise ConnectionRefusedError()

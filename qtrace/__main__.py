@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import pathlib
 
 from . import LogTraceMachine
 
@@ -25,6 +26,7 @@ def main():
     if not arg_0:
         print(f"No such file: {args[0]}", file=sys.stderr)
         exit(1)
+    arg_0 = str(pathlib.Path(arg_0).absolute().resolve())
     args[0] = arg_0
 
     start_time = time.time()

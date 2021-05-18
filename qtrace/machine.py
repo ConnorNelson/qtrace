@@ -1,17 +1,13 @@
 import os
-import sys
 import fcntl
 import select
 import termios
 import array
 import enum
 import ctypes
-import time
-import socket
 import threading
 import subprocess
 import pathlib
-import contextlib
 
 from . import (
     create_connection,
@@ -95,6 +91,7 @@ class TraceMachine:
         self.std_streams = std_streams
         self.gdb_client = gdb_client
         self.trace = []
+        self.maps = {}
         self.async_flushing = threading.Semaphore(0)
 
     @property
@@ -132,6 +129,8 @@ class TraceMachine:
     def run(self):
         if not self.trace_socket:
             self.start()
+
+        self.update_maps()
 
         for callback in self.breakpoints:
             self.gdb.add_breakpoint(callback.gdb_breakpoint_address, callback)
@@ -214,9 +213,39 @@ class TraceMachine:
     def ack(self):
         os.write(self.trace_socket.fileno(), (0).to_bytes(8, "little"))
 
-    def flush(self):
+    def request_flush(self):
         os.write(self.trace_socket.fileno(), (1).to_bytes(8, "little"))
         self.async_flushing.acquire()
+
+    def request_maps(self):
+        os.write(self.trace_socket.fileno(), (2).to_bytes(8, "little"))
+
+    def update_maps(self):
+        self.request_maps()
+        self.maps.clear()
+        for line in self.trace_socket.recv(0x10000).decode().strip().split("\n"):
+            address, permissions, offset, device, inode, pathname = line.split(" ", 5)
+            start_address, end_address = address.split("-")
+            start_address = int(start_address, 16)
+            end_address = int(end_address, 16)
+            offset = int(offset, 16)
+            inode = int(inode)
+            pathname = pathname.strip()
+
+            store = False
+            store |= start_address > 0x4000000000 and end_address < 0x5000000000
+            store |= pathname in {
+                "[heap]",
+                "[stack]",
+                "[vvar]",
+                "[vdso]",
+                "[vsyscall]",
+                self.argv[0],
+            }
+            if store:
+                mapping = (pathname, offset, permissions)
+                self.maps[(start_address, end_address)] = mapping
+        self.ack()
 
     def on_basic_block(self, address):
         self.trace.append(("bb", address))

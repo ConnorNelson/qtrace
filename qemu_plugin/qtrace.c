@@ -2,10 +2,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <assert.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/sendfile.h>
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -19,6 +21,7 @@ struct trace trace;
 sem_t trace_mutex;
 sem_t ack_mutex;
 sem_t flush_mutex;
+sem_t maps_mutex;
 
 
 static void unlocked_trace_flush(enum reason reason, struct trace_info info) {
@@ -106,8 +109,11 @@ static void *handle_client(void *arg)
         case RESPONSE_ACK:
             sem_post(&ack_mutex);
             break;
-        case RESPONSE_FLUSH:
+        case REQUEST_FLUSH:
             sem_post(&flush_mutex);
+            break;
+        case REQUEST_MAPS:
+            sem_post(&maps_mutex);
             break;
         default:
             assert(false);
@@ -124,15 +130,34 @@ static void *handle_flush(void *arg)
     }
 }
 
+static void *handle_maps(void *arg)
+{
+    int maps_fd;
+
+    while (true) {
+        sem_wait(&maps_mutex);
+        sem_wait(&trace_mutex);
+
+        maps_fd = open("/proc/self/maps", O_RDONLY);
+        sendfile(TRACE_FD, maps_fd, 0, 0x10000);
+        close(maps_fd);
+
+        sem_wait(&ack_mutex);
+        sem_post(&trace_mutex);
+    }
+}
+
 QEMU_PLUGIN_EXPORT
 int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info,
                         int argc, char **argv)
 {
     int server_fd;
     int client_fd;
+    int maps_fd;
     struct sockaddr_in server_addr;
     pthread_t client_thread;
     pthread_t flush_thread;
+    uint64_t response;
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -157,9 +182,11 @@ int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info,
     sem_init(&trace_mutex, 0, 1);
     sem_init(&ack_mutex, 0, 0);
     sem_init(&flush_mutex, 0, 0);
+    sem_init(&maps_mutex, 0, 0);
 
     pthread_create(&client_thread, NULL, handle_client, NULL);
     pthread_create(&flush_thread, NULL, handle_flush, NULL);
+    pthread_create(&flush_thread, NULL, handle_maps, NULL);
 
     return 0;
 }

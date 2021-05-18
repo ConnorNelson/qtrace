@@ -40,6 +40,7 @@ struct trace {
 };
 
 #define RESPONSE_ACK 0
-#define RESPONSE_FLUSH 1
+#define REQUEST_FLUSH 1
+#define REQUEST_MAPS 2
 
 #endif
