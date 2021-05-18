@@ -17,7 +17,8 @@ from . import (
     create_connection,
     syscalls,
     syscall_description,
-    gdb,
+    gdb_minimal_client,
+    gdb_api_client,
     LD_PATH,
     LIBS_PATH,
     QEMU_PATH,
@@ -78,10 +79,21 @@ class TRACE(ctypes.Structure):
 
 
 class TraceMachine:
-    def __init__(self, argv, *, trace_socket=None, std_streams=(None, None, None)):
+    def __init__(
+        self,
+        argv,
+        *,
+        trace_socket=None,
+        std_streams=(None, None, None),
+        gdb_client=None,
+    ):
+        if gdb_client is None:
+            gdb_client = gdb_minimal_client
+
         self.argv = argv
         self.trace_socket = trace_socket
         self.std_streams = std_streams
+        self.gdb_client = gdb_client
         self.trace = []
         self.async_flushing = threading.Semaphore(0)
 
@@ -92,7 +104,7 @@ class TraceMachine:
             if name == "breakpoints":
                 continue
             value = getattr(self, name)
-            if hasattr(value, "gdb_breakpoint"):
+            if hasattr(value, "gdb_breakpoint_address"):
                 result.append(value)
         return result
 
@@ -114,8 +126,7 @@ class TraceMachine:
         )
 
         self.trace_socket = create_connection(("localhost", 4242))
-        self.gdb = gdb(("-ex", "target remote localhost:1234", self.argv[0]))
-
+        self.gdb = self.gdb_client(("localhost", 1234), self)
         self.std_streams = (None, process.stdout, process.stderr)
 
     def run(self):
@@ -123,31 +134,13 @@ class TraceMachine:
             self.start()
 
         for callback in self.breakpoints:
+            self.gdb.add_breakpoint(callback.gdb_breakpoint_address, callback)
 
-            machine = self
-
-            class Breakpoint(self.gdb.Breakpoint):
-                def __init__(self, callback):
-                    self.callback = callback
-                    address = callback.gdb_breakpoint
-                    super().__init__(address)
-
-                def stop(self):
-                    try:
-                        machine.flush()
-                        return self.callback()
-                    except Exception as e:
-                        # TODO: this runs in a separate thread, figure out how to correctly handle exceptions
-                        print(f"ERROR: {e}")
-                        exit(1)
-
-            Breakpoint(callback)
-
-        self.gdb.continue_nowait()
+        self.gdb.async_continue()
 
         stdin, stdout, stderr = self.std_streams
 
-        r_list = [self.trace_socket, *filter(None, [stdout, stderr])]
+        r_list = [self.trace_socket, self.gdb.socket, *filter(None, [stdout, stderr])]
         w_list = []
         x_list = []
         num_bytes = array.array("i", [0])
@@ -201,6 +194,9 @@ class TraceMachine:
                         elif reason == TRACE_REASON.trace_async:
                             self.ack()
                             self.async_flushing.release()
+
+                elif r == self.gdb.socket:
+                    data = self.gdb.async_recv()
 
                 elif r == stdout:
                     fcntl.ioctl(r.fileno(), termios.FIONREAD, num_bytes)

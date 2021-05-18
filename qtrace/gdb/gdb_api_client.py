@@ -46,7 +46,7 @@ class Breakpoint:
         return self.stop()
 
 
-class Gdb:
+class GDB:
     """Mirror of ``gdb`` module.
     See https://sourceware.org/gdb/onlinedocs/gdb/Basic-Python.html for more
     information.
@@ -134,20 +134,27 @@ class Memory:
         raise KeyError()
 
 
-def gdb(gdb_args, *, expose_extra=None):
+def gdb_api_client(address, machine, *, gdb_args=None, expose_extra=None):
+    raise Exception("This is currently broken")
+
+    if gdb_args is None:
+        gdb_args = []
     if expose_extra is None:
         expose_extra = []
 
     socket_dir_path = Path(mkdtemp())
     socket_path = socket_dir_path / "socket"
     gdb_api_bridge_path = Path(__file__).parent / "gdb_api_bridge.py"
+    host, port = address
 
     args = [
         "gdb",
         *("-ex", f"python socket_path = {repr(str(socket_path))}"),
         *("-ex", f"python expose_extra = {str(expose_extra)}"),
         *("-ex", f"source {gdb_api_bridge_path}"),
+        *("-ex", f"target remote {host}:{port}"),
         *gdb_args,
+        machine.argv[0],
     ]
     process = Popen(args, stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL)
 
@@ -162,16 +169,4 @@ def gdb(gdb_args, *, expose_extra=None):
 
     BgServingThread(conn, callback=lambda: None)
 
-    return Gdb(conn, extra=expose_extra)
-
-
-def breakpoint(address):
-    if isinstance(address, int):
-        address = hex(address)
-    address = f"*{address}"
-
-    def wrapper(func):
-        func.gdb_breakpoint = address
-        return func
-
-    return wrapper
+    return GDB(conn, extra=expose_extra)
