@@ -20,7 +20,7 @@ jobs:
         tags: qtrace:latest
         load: true
         cache-from: type=local,src=/tmp/.buildx-cache
-        cache-to: type=local,dest=/tmp/.buildx-cache
+        cache-to: type=local,mode=max,dest=/tmp/.buildx-cache
     - name: Run Tests
       run: |
         docker run -t --rm qtrace:latest
