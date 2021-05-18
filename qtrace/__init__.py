@@ -8,5 +8,5 @@ QTRACE_PATH = DEPS_PATH / "libqtrace.so"
 
 from .utils import create_connection
 from .syscalls import syscalls, syscall_description
-from .gdb import gdb_minimal_client, gdb_api_client, breakpoint
+from .gdb import gdb_minimal_client, breakpoint
 from .machine import TraceMachine, LogTraceMachine

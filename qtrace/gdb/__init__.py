@@ -1,5 +1,4 @@
 from .gdb_minimal_client import gdb_minimal_client
-from .gdb_api_client import gdb_api_client
 
 
 def breakpoint(address):

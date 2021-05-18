@@ -14,7 +14,6 @@ from . import (
     syscalls,
     syscall_description,
     gdb_minimal_client,
-    gdb_api_client,
     LD_PATH,
     LIBS_PATH,
     QEMU_PATH,
