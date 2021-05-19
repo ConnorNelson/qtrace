@@ -31,7 +31,7 @@ def package_dependencies():
 
 setup(
     name="qtrace",
-    version="0.5.2",
+    version="0.5.3",
     python_requires=">=3.6",
     packages=find_packages(),
     entry_points={
