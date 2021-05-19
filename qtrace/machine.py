@@ -1,4 +1,5 @@
 import os
+import re
 import fcntl
 import select
 import termios
@@ -216,28 +217,38 @@ class TraceMachine:
     def update_maps(self):
         self.request_maps()
         self.maps.clear()
-        for line in self.trace_socket.recv(0x10000).decode().strip().split("\n"):
-            address, permissions, offset, device, inode, pathname = line.split(" ", 5)
-            start_address, end_address = address.split("-")
+
+        map_data = b""
+        while not map_data.endswith(b"\n\n"):
+            map_data += self.trace_socket.recv(0x10000)
+
+        expected_range = range(0x4000000000, 0x5000000000)
+        expected_pathnames = {self.argv[0], "[heap]", "[stack]"}
+        pattern = re.compile(b"(\S+)-(\S+) (\S+) (\S+) (\S+) (\S+) +(.*)\n")
+        for line in re.finditer(pattern, map_data):
+            (
+                start_address,
+                end_address,
+                permissions,
+                offset,
+                device,
+                inode,
+                pathname,
+            ) = line.groups()
             start_address = int(start_address, 16)
             end_address = int(end_address, 16)
             offset = int(offset, 16)
             inode = int(inode)
-            pathname = pathname.strip()
+            pathname = pathname.decode()
 
-            store = False
-            store |= start_address > 0x4000000000 and end_address < 0x5000000000
-            store |= pathname in {
-                "[heap]",
-                "[stack]",
-                "[vvar]",
-                "[vdso]",
-                "[vsyscall]",
-                self.argv[0],
-            }
-            if store:
+            if (
+                start_address in expected_range
+                or end_address in expected_range
+                or pathname in expected_pathnames
+            ):
                 mapping = (pathname, offset, permissions)
                 self.maps[(start_address, end_address)] = mapping
+
         self.ack()
 
     def on_basic_block(self, address):

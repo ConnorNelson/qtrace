@@ -133,13 +133,19 @@ static void *handle_flush(void *arg)
 static void *handle_maps(void *arg)
 {
     int maps_fd;
+    int n;
+    int count;
+    char buffer[0x10000];
 
     while (true) {
         sem_wait(&maps_mutex);
         sem_wait(&trace_mutex);
 
         maps_fd = open("/proc/self/maps", O_RDONLY);
-        sendfile(TRACE_FD, maps_fd, 0, 0x10000);
+        for (count = 0; (n = read(maps_fd, buffer + count, 0x10000 - count - 1)) > 0; count += n);
+        buffer[count++] = '\n';
+        assert(count != 0x10000);
+        write(TRACE_FD, buffer, count);
         close(maps_fd);
 
         sem_wait(&ack_mutex);
