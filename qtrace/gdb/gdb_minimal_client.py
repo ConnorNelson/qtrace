@@ -1,4 +1,3 @@
-import collections
 import contextlib
 
 from ..utils import create_connection
@@ -73,7 +72,7 @@ class GDB:
         self.socket = create_connection(address)
         self.arch = arch
         self.registers = self.fetch_registers()
-        self.breakpoints = collections.defaultdict(list)
+        self.breakpoints = {}
         self.memory = Memory(self)
 
     def checksum(self, data):
@@ -132,17 +131,15 @@ class GDB:
         return bytes.fromhex(response.decode())
 
     def add_breakpoint(self, address, callback):
-        if address not in self.breakpoints:
-            self.send(f"Z0,{address:x},2")
-            self.recv(ok=True)
-        self.breakpoints[address].append(callback)
+        assert address not in self.breakpoints
+        self.send(f"Z0,{address:x},2")
+        self.recv(ok=True)
+        self.breakpoints[address] = callback
 
     def handle_sigtrap(self):
         self.fetch_registers()
-        current_breakpoints = self.breakpoints[self.rip]
-        assert current_breakpoints
-        for callback in current_breakpoints:
-            callback()
+        callback = self.breakpoints[self.rip]
+        callback()
         self.step()
         self.async_continue()
 

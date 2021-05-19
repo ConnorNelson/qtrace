@@ -6,7 +6,6 @@ import termios
 import array
 import enum
 import ctypes
-import threading
 import subprocess
 import pathlib
 
@@ -83,7 +82,6 @@ class TraceMachine:
         self.gdb_client = gdb_client
         self.trace = []
         self.maps = {}
-        self.async_flushing = threading.Semaphore(0)
 
         self.trace_socket = None
         self.gdb = None
@@ -127,7 +125,12 @@ class TraceMachine:
         self.update_maps()
 
         for callback in self.breakpoints:
-            self.gdb.add_breakpoint(callback.gdb_breakpoint_address, callback)
+
+            def flush_callback(*, callback=callback):
+                self.request_flush()
+                callback()
+
+            self.gdb.add_breakpoint(callback.gdb_breakpoint_address, flush_callback)
 
         self.gdb.async_continue()
 
@@ -145,48 +148,7 @@ class TraceMachine:
 
             for r in r_available:
                 if r == self.trace_socket:
-                    data = os.read(r.fileno(), ctypes.sizeof(TRACE_HEADER))
-                    if data:
-                        trace_header = TRACE_HEADER.from_buffer_copy(data)
-                        bb_addr_type = dict(TRACE._fields_)["bb_addrs"]._type_
-                        bb_addrs_size = trace_header.num_addrs * ctypes.sizeof(
-                            bb_addr_type
-                        )
-
-                        trace_data = b""
-                        while len(trace_data) < bb_addrs_size:
-                            trace_data += os.read(
-                                r.fileno(), bb_addrs_size - len(trace_data)
-                            )
-                        trace_addrs = (
-                            trace_header.num_addrs * bb_addr_type
-                        ).from_buffer_copy(trace_data)
-
-                        reason = TRACE_REASON(trace_header.reason)
-
-                        for address in trace_addrs:
-                            self.on_basic_block(address)
-
-                        if reason == TRACE_REASON.trace_full:
-                            self.ack()
-
-                        elif reason == TRACE_REASON.trace_syscall_start:
-                            syscall_nr = trace_header.info.syscall_num
-                            syscall_definition = syscalls["x86_64"][syscall_nr]
-                            syscall_args = syscall_definition[2:]
-                            args = list(
-                                trace_header.info.syscall_data.syscall_start_data
-                            )[: len(syscall_args)]
-                            self.on_syscall_start(syscall_nr, *args)
-
-                        elif reason == TRACE_REASON.trace_syscall_end:
-                            syscall_nr = trace_header.info.syscall_num
-                            ret = trace_header.info.syscall_data.syscall_ret
-                            self.on_syscall_end(syscall_nr, ret)
-
-                        elif reason == TRACE_REASON.trace_async:
-                            self.ack()
-                            self.async_flushing.release()
+                    data = self.handle_trace()
 
                 elif r == self.gdb.socket:
                     data = self.gdb.async_recv()
@@ -204,12 +166,57 @@ class TraceMachine:
                 if not data:
                     r_list.remove(r)
 
+    def handle_trace(self):
+        data = os.read(self.trace_socket.fileno(), ctypes.sizeof(TRACE_HEADER))
+        if not data:
+            return
+
+        trace_header = TRACE_HEADER.from_buffer_copy(data)
+        bb_addr_type = dict(TRACE._fields_)["bb_addrs"]._type_
+        bb_addrs_size = trace_header.num_addrs * ctypes.sizeof(bb_addr_type)
+
+        trace_data = b""
+        while len(trace_data) < bb_addrs_size:
+            trace_data += os.read(
+                self.trace_socket.fileno(), bb_addrs_size - len(trace_data)
+            )
+
+        trace_addrs = (trace_header.num_addrs * bb_addr_type).from_buffer_copy(
+            trace_data
+        )
+        self.on_basic_blocks(trace_addrs)
+
+        reason = TRACE_REASON(trace_header.reason)
+
+        if reason == TRACE_REASON.trace_full:
+            self.ack()
+
+        elif reason == TRACE_REASON.trace_syscall_start:
+            syscall_nr = trace_header.info.syscall_num
+            syscall_definition = syscalls["x86_64"][syscall_nr]
+            syscall_args = syscall_definition[2:]
+            args = list(trace_header.info.syscall_data.syscall_start_data)[
+                : len(syscall_args)
+            ]
+            self.on_syscall_start(syscall_nr, *args)
+
+        elif reason == TRACE_REASON.trace_syscall_end:
+            syscall_nr = trace_header.info.syscall_num
+            ret = trace_header.info.syscall_data.syscall_ret
+            self.on_syscall_end(syscall_nr, ret)
+
+        elif reason == TRACE_REASON.trace_async:
+            self.ack()
+
+        return reason
+
     def ack(self):
         os.write(self.trace_socket.fileno(), (0).to_bytes(8, "little"))
 
     def request_flush(self):
         os.write(self.trace_socket.fileno(), (1).to_bytes(8, "little"))
-        self.async_flushing.acquire()
+        reason = self.handle_trace()
+        assert reason == TRACE_REASON.trace_async
 
     def request_maps(self):
         os.write(self.trace_socket.fileno(), (2).to_bytes(8, "little"))
@@ -253,6 +260,9 @@ class TraceMachine:
 
     def on_basic_block(self, address):
         self.trace.append(("bb", address))
+
+    def on_basic_blocks(self, addresses):
+        self.trace.extend(("bb", address) for address in addresses)
 
     def on_syscall_start(self, syscall_nr, *args):
         self.trace.append(("syscall_start", syscall_nr, *args))
