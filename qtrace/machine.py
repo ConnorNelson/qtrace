@@ -87,6 +87,8 @@ class TraceMachine:
         self.gdb = None
         self.std_streams = None
 
+        self._skip_breakpoint_trace_address = False
+
     @property
     def breakpoints(self):
         result = []
@@ -129,6 +131,7 @@ class TraceMachine:
             def flush_callback(*, callback=callback):
                 self.request_flush()
                 callback()
+                self._skip_breakpoint_trace_address = True
 
             self.gdb.add_breakpoint(callback.gdb_breakpoint_address, flush_callback)
 
@@ -184,6 +187,12 @@ class TraceMachine:
         trace_addrs = (trace_header.num_addrs * bb_addr_type).from_buffer_copy(
             trace_data
         )
+        trace_addrs = iter(trace_addrs)
+        if self._skip_breakpoint_trace_address:
+            # GDB breakpoints will extraneously add an additional trace address
+            # See https://github.com/ConnorNelson/qtrace/issues/6
+            next(trace_addrs)
+            self._skip_breakpoint_trace_address = False
         self.on_basic_blocks(trace_addrs)
 
         reason = TRACE_REASON(trace_header.reason)
