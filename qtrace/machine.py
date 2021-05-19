@@ -238,8 +238,8 @@ class TraceMachine:
             start_address = int(start_address, 16)
             end_address = int(end_address, 16)
             offset = int(offset, 16)
-            inode = int(inode)
             pathname = pathname.decode()
+            permissions = permissions.decode()
 
             if (
                 start_address in expected_range
