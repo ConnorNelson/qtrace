@@ -1,4 +1,7 @@
+all: factorial loop
+
 factorial: factorial.c
 	gcc -o factorial factorial.c
 
-all: factorial
+loop: loop.c
+	gcc -o loop loop.c
