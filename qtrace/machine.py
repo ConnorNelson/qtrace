@@ -1,5 +1,6 @@
 import os
 import re
+import socket
 import fcntl
 import select
 import termios
@@ -170,30 +171,29 @@ class TraceMachine:
                     r_list.remove(r)
 
     def handle_trace(self):
-        data = os.read(self.trace_socket.fileno(), ctypes.sizeof(TRACE_HEADER))
-        if not data:
+        trace_header_size = ctypes.sizeof(TRACE_HEADER)
+        trace_header = TRACE_HEADER.from_buffer(bytearray(trace_header_size))
+        if not self.trace_socket.recv_into(trace_header, flags=socket.MSG_WAITALL):
             return
 
-        trace_header = TRACE_HEADER.from_buffer_copy(data)
         bb_addr_type = dict(TRACE._fields_)["bb_addrs"]._type_
-        bb_addrs_size = trace_header.num_addrs * ctypes.sizeof(bb_addr_type)
+        bb_addr_size = ctypes.sizeof(bb_addr_type)
 
-        trace_data = b""
-        while len(trace_data) < bb_addrs_size:
-            trace_data += os.read(
-                self.trace_socket.fileno(), bb_addrs_size - len(trace_data)
-            )
-
-        trace_addrs = (trace_header.num_addrs * bb_addr_type).from_buffer_copy(
-            trace_data
-        )
-        trace_addrs = iter(trace_addrs)
+        num_addrs = trace_header.num_addrs
         if self._skip_breakpoint_trace_address:
             # GDB breakpoints will extraneously add an additional trace address
             # See https://github.com/ConnorNelson/qtrace/issues/6
-            next(trace_addrs)
+            self.trace_socket.recv(bb_addr_size, socket.MSG_WAITALL)
+            num_addrs -= 1
             self._skip_breakpoint_trace_address = False
-        self.on_basic_blocks(trace_addrs)
+
+        bb_addr_array_type = num_addrs * bb_addr_type
+        bb_addr_array_size = num_addrs * bb_addr_size
+
+        bb_addrs = bb_addr_array_type.from_buffer(bytearray(bb_addr_array_size))
+        self.trace_socket.recv_into(bb_addrs, flags=socket.MSG_WAITALL)
+
+        self.on_basic_blocks(bb_addrs)
 
         reason = TRACE_REASON(trace_header.reason)
 
@@ -266,9 +266,6 @@ class TraceMachine:
                 self.maps[(start_address, end_address)] = mapping
 
         self.ack()
-
-    def on_basic_block(self, address):
-        self.trace.append(("bb", address))
 
     def on_basic_blocks(self, addresses):
         self.trace.extend(("bb", address) for address in addresses)
