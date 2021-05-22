@@ -101,6 +101,19 @@ class TraceMachine:
                 result.append(value)
         return result
 
+    @property
+    def binary_base_address(self):
+        if not self.maps:
+            raise RuntimeError("No program maps found, is the target running?")
+        binary_name = pathlib.Path(self.argv[0]).name
+        for region, mapping in self.maps.items():
+            start_address, end_address = region
+            pathname, offset, permissions = mapping
+            pathname_name = pathlib.Path(pathname).name
+            if pathname_name == binary_name and offset == 0:
+                return start_address
+        raise Exception("Could not find base address of binary")
+
     def start(self):
         process = subprocess.Popen(
             [
@@ -134,7 +147,8 @@ class TraceMachine:
                 callback()
                 self._skip_breakpoint_trace_address = True
 
-            self.gdb.add_breakpoint(callback.gdb_breakpoint_address, flush_callback)
+            address = callback.gdb_breakpoint_address + self.binary_base_address
+            self.gdb.add_breakpoint(address, flush_callback)
 
         self.gdb.async_continue()
 
